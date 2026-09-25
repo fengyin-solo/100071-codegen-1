@@ -7,10 +7,12 @@ from fastapi import APIRouter, HTTPException, Query
 
 from app.schemas import ActionResult, EntryPayload, PageResult
 from app.services.road import RoadService
+from app.services.road_overview import RoadOverviewService
 
 router = APIRouter(prefix="/api/road", tags=["道路设施"])
 
 service = RoadService()
+overview_service = RoadOverviewService()
 
 LIST_FIELDS = ["设施编码", "道路名称", "道路等级", "起止桩号", "路面结构", "管养单位", "建成年份", "设施状态"]
 STATUSES = ["待移交", "正常养护", "重点观测", "封闭施工"]
@@ -28,6 +30,28 @@ def list_entries(
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
     items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.get("/overview/summary")
+def road_overview_summary() -> dict[str, Any]:
+    """路况总览：按道路等级与管养单位分组成排，每格带最近病害数与未闭环计划数。"""
+    return overview_service.overview()
+
+
+@router.get("/overview/{entry_id}")
+def road_overview_detail(entry_id: int) -> dict[str, Any]:
+    """总览单条详情：该道路关联的病害清单，以及养护计划与其施工进度。"""
+    detail = overview_service.detail(entry_id)
+    if detail is None:
+        raise HTTPException(status_code=404, detail=f"道路设施 {entry_id} 不存在或已归档")
+    return detail
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出道路设施清单：返回当前过滤条件下的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "road", "total": total, "items": items}
 
 
 @router.get("/{entry_id}", response_model=dict)
@@ -48,6 +72,15 @@ def create_entry(payload: EntryPayload) -> ActionResult:
     return ActionResult(ok=True, message="道路设施已登记", entry=entry)
 
 
+@router.patch("/{entry_id}", response_model=ActionResult)
+def update_entry(entry_id: int, payload: EntryPayload) -> ActionResult:
+    """在路况总览里修改道路等级、管养单位等；改动直接落在台账同一条记录上。"""
+    entry, message = service.update_entry(entry_id, payload.values)
+    if entry is None:
+        return ActionResult(ok=False, message=message)
+    return ActionResult(ok=True, message=message, entry=entry)
+
+
 @router.post("/{entry_id}/actions", response_model=ActionResult)
 def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     """对单条道路设施执行办理移交、标记观测、封闭设施；不允许的动作会被拦下并说明原因。"""
@@ -56,10 +89,3 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出道路设施清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "road", "total": total, "items": items}

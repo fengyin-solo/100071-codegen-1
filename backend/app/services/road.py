@@ -7,6 +7,7 @@ from app.store import store
 
 MODULE = "road"
 REQUIRED_FIELDS = ["设施编码", "道路名称", "道路等级"]
+EDITABLE_FIELDS = ["道路等级", "管养单位"]
 STATUS_ORDER = ["待移交", "正常养护", "重点观测", "封闭施工"]
 ACTION_RULES = {"办理移交": "正常养护", "标记观测": "重点观测", "封闭设施": "封闭施工"}
 NEGATIVE_ACTIONS = []
@@ -45,6 +46,25 @@ class RoadService:
         entry["abnormal"] = False
         rows.append(entry)
         return entry, []
+
+    def update_entry(self, entry_id: int, values: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+        """在路况总览里就地修改道路等级、管养单位等字段；台账读到的是同一条记录。"""
+        entry = store.find(MODULE, entry_id)
+        if entry is None:
+            return None, f"道路设施 {entry_id} 不存在或已归档"
+        changed: dict[str, str] = {}
+        for field in EDITABLE_FIELDS:
+            if field not in values:
+                continue
+            value = str(values.get(field) or "").strip()
+            if not value:
+                return None, f"字段「{field}」不允许清空"
+            if entry.get(field) != value:
+                entry[field] = value
+                changed[field] = value
+        if not changed:
+            return entry, "道路设施信息未发生变化"
+        return entry, "道路设施已更新：" + "、".join(changed)
 
     def run_action(self, entry_id: int, action: str) -> tuple[dict[str, Any] | None, str]:
         entry = store.find(MODULE, entry_id)
